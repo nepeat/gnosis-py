@@ -1,4 +1,5 @@
-from typing import Optional
+import binascii
+from typing import Optional, Union
 
 from django.core import exceptions
 from django.db import models
@@ -173,3 +174,61 @@ class Sha3HashField(HexField):
         name, path, args, kwargs = super().deconstruct()
         del kwargs["max_length"]
         return name, path, args, kwargs
+
+
+class Keccak256Field(models.BinaryField):
+    description = "Keccak256 hash stored as binary"
+    default_error_messages = {
+        "invalid": _('"%(value)s" hash must be a 32 bytes hexadecimal.'),
+        "length": _('"%(value)s" hash must have exactly 32 bytes.'),
+    }
+
+    def __init__(self, *args, **kwargs):
+        kwargs["max_length"] = 32
+        super().__init__(*args, **kwargs)
+
+    def deconstruct(self):
+        name, path, args, kwargs = super().deconstruct()
+        del kwargs["max_length"]
+        return name, path, args, kwargs
+
+    def to_bytes(self, value) -> Optional[bytes]:
+        if value is None:
+            return
+        else:
+            try:
+                result = HexBytes(value)
+                if len(result) != 32:
+                    raise exceptions.ValidationError(
+                        self.error_messages["length"],
+                        code="length",
+                        params={"value": value},
+                    )
+                return result
+            except (ValueError, binascii.Error):
+                raise exceptions.ValidationError(
+                    self.error_messages["invalid"],
+                    code="invalid",
+                    params={"value": value},
+                )
+
+    def from_db_value(
+        self, value: memoryview, expression, connection
+    ) -> Optional[bytes]:
+        if value:
+            return HexBytes(value.tobytes()).hex()
+
+    def get_prep_value(self, value: Union[bytes, str]) -> Optional[bytes]:
+        if value:
+            return self.to_bytes(value)
+
+    def to_python(self, value) -> Optional[str]:
+        if value is not None:
+            try:
+                return self.to_bytes(value)
+            except (ValueError, binascii.Error):
+                raise exceptions.ValidationError(
+                    self.error_messages["invalid"],
+                    code="invalid",
+                    params={"value": value},
+                )
